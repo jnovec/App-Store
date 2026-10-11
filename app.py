@@ -1,10 +1,11 @@
-import os, json, subprocess, threading, time, re, urllib.request, urllib.parse, mimetypes
+import os, json, subprocess, threading, time, re, urllib.request, urllib.parse, mimetypes, socket, secrets, hmac
 from pathlib import Path
 from typing import Optional
 import yaml
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Header
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 BASE = Path('/app')
 DATA = Path('/data')
@@ -16,9 +17,38 @@ ICON_CACHE_VERSION_VALUE = 'dashboard-icons-v4'
 DASHBOARD_TREE = DATA / 'dashboard-icons-tree.json'
 DASHBOARD_TREE_URL = 'https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/tree.json'
 DASHBOARD_CDN = 'https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png'
+ADMIN_PIN_FILE = DATA / 'admin-pin.txt'
+AGENT_SECRET_FILE = DATA / 'deploy-agent-secret.txt'
+DEPLOY_SOCKET = DATA / 'deploy.sock'
+DEPLOYMENTS = DATA / 'deployments.json'
+ONE_CLICK_APPS = {
+    'uptime-kuma', 'it-tools', 'stirling-pdf', 'mealie', 'nocodb',
+    'gitea', 'vaultwarden', 'open-webui', 'metabase'
+}
 
-api = FastAPI(title='NOVEC App Store', version='0.2.4')
+api = FastAPI(title='NOVEC App Store', version='0.3.0')
 _dashboard_icon_names = None
+
+
+class DeployRequest(BaseModel):
+    app_id: str
+    subdomain: str
+
+
+def ensure_local_secrets():
+    DATA.mkdir(parents=True, exist_ok=True)
+    if not ADMIN_PIN_FILE.exists():
+        alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+        ADMIN_PIN_FILE.write_text(''.join(secrets.choice(alphabet) for _ in range(10)), encoding='utf-8')
+    if not AGENT_SECRET_FILE.exists():
+        AGENT_SECRET_FILE.write_text(secrets.token_urlsafe(32), encoding='utf-8')
+
+
+def require_admin(pin: Optional[str]):
+    expected = ADMIN_PIN_FILE.read_text(encoding='utf-8').strip() if ADMIN_PIN_FILE.exists() else ''
+    if not pin or not expected or not hmac.compare_digest(pin.strip(), expected):
+        raise HTTPException(status_code=401, detail='Invalid admin PIN')
+
 
 def ensure_icon_cache_version():
     ICONS.mkdir(parents=True, exist_ok=True)
@@ -30,11 +60,13 @@ def ensure_icon_cache_version():
                 except Exception: pass
         ICON_CACHE_VERSION.write_text(ICON_CACHE_VERSION_VALUE, encoding='utf-8')
 
+
 def slugify(value: str):
     value = (value or '').lower().strip()
     value = value.replace('&', ' and ')
     value = re.sub(r'[^a-z0-9]+', '-', value)
     return value.strip('-')
+
 
 def dashboard_icon_names():
     global _dashboard_icon_names
@@ -53,6 +85,7 @@ def dashboard_icon_names():
         _dashboard_icon_names = set()
     return _dashboard_icon_names
 
+
 def icon_candidates(app):
     vals = [app.get('id',''), app.get('name','')]
     source = app.get('source') or ''
@@ -65,6 +98,7 @@ def icon_candidates(app):
         if s and s not in out:
             out.append(s)
     return out
+
 
 def sync_catalog():
     DATA.mkdir(parents=True, exist_ok=True)
@@ -99,6 +133,7 @@ def sync_catalog():
                 'version': release.get('tag') if isinstance(release, dict) else '',
                 'archived': archived,
                 'ready': dockerish and not archived,
+                'one_click': f.stem in ONE_CLICK_APPS,
                 'initials': ''.join([p[0] for p in re.split(r'[\s\-_]+', name) if p])[:2].upper(),
                 'icon': f'/api/icon/{urllib.parse.quote(f.stem, safe="")}?v=4'
             })
@@ -108,9 +143,11 @@ def sync_catalog():
     CATALOG.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
     return payload
 
+
 def load_catalog():
     if not CATALOG.exists(): return sync_catalog()
     return json.loads(CATALOG.read_text(encoding='utf-8'))
+
 
 def background_sync():
     while True:
@@ -118,13 +155,16 @@ def background_sync():
         except Exception as e: print('sync failed:', e, flush=True)
         time.sleep(21600)
 
+
 def safe_icon_id(app_id: str):
     return re.sub(r'[^A-Za-z0-9._-]+', '_', app_id)[:180]
+
 
 def app_by_id(app_id: str):
     for app in load_catalog()['apps']:
         if app['id'] == app_id: return app
     return None
+
 
 def cached_icon(app_id: str):
     sid = safe_icon_id(app_id)
@@ -133,8 +173,10 @@ def cached_icon(app_id: str):
         if p.exists() and p.stat().st_size > 64: return p
     return None
 
+
 def miss_path(app_id: str):
     return ICONS / f'{safe_icon_id(app_id)}.miss'
+
 
 def download_icon(url: str, target_base: Path):
     if not url or not url.startswith(('http://','https://')): return None
@@ -153,6 +195,7 @@ def download_icon(url: str, target_base: Path):
             return out
     except Exception:
         return None
+
 
 def resolve_icon(app):
     ensure_icon_cache_version()
@@ -201,12 +244,61 @@ def resolve_icon(app):
     except Exception: pass
     return None
 
+
+def call_deploy_agent(app_id: str, subdomain: str):
+    if not DEPLOY_SOCKET.exists():
+        raise HTTPException(status_code=503, detail='Deploy agent is not running')
+    secret = AGENT_SECRET_FILE.read_text(encoding='utf-8').strip() if AGENT_SECRET_FILE.exists() else ''
+    if not secret:
+        raise HTTPException(status_code=503, detail='Deploy agent secret missing')
+    payload = json.dumps({'app_id': app_id, 'subdomain': subdomain}).encode('utf-8')
+    request = (
+        b'POST /deploy HTTP/1.1\r\n'
+        b'Host: localhost\r\n'
+        b'Content-Type: application/json\r\n' +
+        f'X-NOVEC-Agent-Secret: {secret}\r\n'.encode('utf-8') +
+        f'Content-Length: {len(payload)}\r\n'.encode('ascii') +
+        b'Connection: close\r\n\r\n' + payload
+    )
+    chunks = []
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(310)
+        sock.connect(str(DEPLOY_SOCKET))
+        sock.sendall(request)
+        while True:
+            part = sock.recv(65536)
+            if not part: break
+            chunks.append(part)
+        sock.close()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f'Deploy agent error: {e}')
+    raw = b''.join(chunks)
+    head, sep, body = raw.partition(b'\r\n\r\n')
+    if not sep:
+        raise HTTPException(status_code=502, detail='Invalid deploy agent response')
+    status_line = head.split(b'\r\n', 1)[0].decode('utf-8', errors='replace')
+    try:
+        status = int(status_line.split()[1])
+    except Exception:
+        status = 502
+    try:
+        data = json.loads(body.decode('utf-8'))
+    except Exception:
+        data = {'ok': False, 'error': body.decode('utf-8', errors='replace')[-1000:]}
+    if status >= 400 or not data.get('ok'):
+        raise HTTPException(status_code=400 if status < 500 else 502, detail=data.get('error', 'Deployment failed'))
+    return data
+
+
 @api.on_event('startup')
 def startup():
+    ensure_local_secrets()
     ensure_icon_cache_version()
     try: sync_catalog()
     except Exception as e: print('initial sync failed:', e, flush=True)
     threading.Thread(target=background_sync, daemon=True).start()
+
 
 @api.get('/api/apps')
 def apps(q: str = '', tag: str = '', ready: Optional[bool] = None, limit: int = Query(120, ge=1, le=2000)):
@@ -218,10 +310,12 @@ def apps(q: str = '', tag: str = '', ready: Optional[bool] = None, limit: int = 
     rows = sorted(rows, key=lambda a: (a['archived'], -int(a['stars'] or 0), a['name'].lower()))
     ready_count = sum(1 for a in cat['apps'] if a['ready'])
     active_count = sum(1 for a in cat['apps'] if not a['archived'])
+    one_click_count = sum(1 for a in cat['apps'] if a.get('one_click'))
     tags = {}
     for a in cat['apps']:
         for t in a['tags']: tags[t] = tags.get(t, 0) + 1
-    return {'synced_at':cat['synced_at'],'stats':{'total':cat['count'],'active':active_count,'ready':ready_count},'top_tags':sorted(tags.items(), key=lambda x:-x[1])[:40],'apps':rows[:limit]}
+    return {'synced_at':cat['synced_at'],'stats':{'total':cat['count'],'active':active_count,'ready':ready_count,'one_click':one_click_count},'top_tags':sorted(tags.items(), key=lambda x:-x[1])[:40],'apps':rows[:limit]}
+
 
 @api.get('/api/icon/{app_id}')
 def icon(app_id: str):
@@ -231,20 +325,51 @@ def icon(app_id: str):
     if not path: raise HTTPException(status_code=404, detail='Icon not available')
     return FileResponse(path, headers={'Cache-Control':'public, max-age=604800, immutable'})
 
+
+@api.post('/api/deploy')
+def deploy(req: DeployRequest, x_novec_admin_pin: Optional[str] = Header(default=None)):
+    require_admin(x_novec_admin_pin)
+    app = app_by_id(req.app_id)
+    if not app:
+        raise HTTPException(status_code=404, detail='App not found')
+    if req.app_id not in ONE_CLICK_APPS:
+        raise HTTPException(status_code=400, detail='This app does not have a reviewed one-click template yet')
+    sub = req.subdomain.strip().lower()
+    if not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', sub):
+        raise HTTPException(status_code=400, detail='Invalid subdomain')
+    if sub in {'store','n8n','www','api','dev','ssh','mail'}:
+        raise HTTPException(status_code=400, detail='Reserved subdomain')
+    return call_deploy_agent(req.app_id, sub)
+
+
+@api.get('/api/deployments')
+def deployments(x_novec_admin_pin: Optional[str] = Header(default=None)):
+    require_admin(x_novec_admin_pin)
+    if not DEPLOYMENTS.exists():
+        return {'deployments': {}}
+    try:
+        return {'deployments': json.loads(DEPLOYMENTS.read_text(encoding='utf-8'))}
+    except Exception:
+        return {'deployments': {}}
+
+
 @api.post('/api/sync')
 def sync():
     data = sync_catalog(); return {'ok':True,'count':data['count'],'synced_at':data['synced_at']}
 
+
 @api.get('/api/health')
 def health():
     cat = load_catalog(); cached = len([p for p in ICONS.glob('*') if p.suffix != '.miss']) if ICONS.exists() else 0
-    return {'ok':True,'apps':cat['count'],'cached_icons':cached,'icon_source':'dashboard-icons+website'}
+    return {'ok':True,'apps':cat['count'],'cached_icons':cached,'icon_source':'dashboard-icons+website','deploy_agent':DEPLOY_SOCKET.exists(),'one_click_templates':len(ONE_CLICK_APPS)}
+
 
 @api.get('/')
 def root():
     html = (BASE/'static'/'index.html').read_text(encoding='utf-8')
-    html = html.replace('</head>', '<link rel="stylesheet" href="/static/icon-enhancer.css"></head>')
-    html = html.replace('</body>', '<script src="/static/icon-enhancer.js"></script></body>')
+    html = html.replace('</head>', '<link rel="stylesheet" href="/static/icon-enhancer.css"><link rel="stylesheet" href="/static/deploy-enhancer.css"></head>')
+    html = html.replace('</body>', '<script src="/static/icon-enhancer.js"></script><script src="/static/deploy-enhancer.js"></script></body>')
     return HTMLResponse(html)
+
 
 api.mount('/static', StaticFiles(directory=BASE/'static'), name='static')
