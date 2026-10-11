@@ -5,9 +5,11 @@ import urllib.request
 from typing import Optional
 
 from fastapi import Header, HTTPException, Query
+from fastapi.responses import HTMLResponse
 
 from app import (
     api,
+    BASE,
     DATA,
     ICONS,
     AGENT_SECRET_FILE,
@@ -85,6 +87,7 @@ remove_route('/api/deploy', {'POST'})
 remove_route('/api/deploy-status/{job_id}', {'GET'})
 remove_route('/api/deployments', {'GET'})
 remove_route('/api/health', {'GET'})
+remove_route('/', {'GET'})
 
 
 @api.get('/api/apps')
@@ -208,3 +211,11 @@ def health_v3():
         'async_deploy': True,
         'deploy_ui': 'floating-terminal',
     }
+
+
+@api.get('/')
+def root_v2():
+    html = (BASE/'static'/'index.html').read_text(encoding='utf-8')
+    html = html.replace('</head>', '<link rel="stylesheet" href="/static/icon-enhancer.css"><link rel="stylesheet" href="/static/deploy-enhancer.css"><link rel="stylesheet" href="/static/deploy-console.css?v=1"></head>')
+    html = html.replace('</body>', '<script src="/static/icon-enhancer.js"></script><script src="/static/deploy-enhancer.js"></script><script src="/static/deploy-console.js?v=1"></script></body>')
+    return HTMLResponse(html)
