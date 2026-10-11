@@ -1,5 +1,8 @@
 import json
+import threading
+import time
 import urllib.request
+import uuid
 from typing import Optional
 
 from fastapi import Header, HTTPException
@@ -18,6 +21,8 @@ from app import (
 )
 
 AGENT_URL = 'http://host.docker.internal:18791'
+DEPLOY_JOBS = {}
+DEPLOY_JOBS_LOCK = threading.Lock()
 
 
 def remove_route(path, methods=None):
@@ -32,7 +37,7 @@ def remove_route(path, methods=None):
 
 
 def agent_request(path, payload=None, timeout=310):
-    headers = {'User-Agent': 'NOVEC-App-Store/0.3'}
+    headers = {'User-Agent': 'NOVEC-App-Store/0.4'}
     data = None
     if payload is not None:
         secret = AGENT_SECRET_FILE.read_text(encoding='utf-8').strip() if AGENT_SECRET_FILE.exists() else ''
@@ -56,13 +61,33 @@ def agent_request(path, payload=None, timeout=310):
         raise HTTPException(status_code=503, detail=f'Deploy agent unavailable: {e}')
 
 
+def set_job(job_id, **fields):
+    with DEPLOY_JOBS_LOCK:
+        job = DEPLOY_JOBS.get(job_id, {})
+        job.update(fields)
+        job['updated_at'] = time.time()
+        DEPLOY_JOBS[job_id] = job
+
+
+def run_deploy_job(job_id, app_id, subdomain):
+    try:
+        set_job(job_id, status='running', stage='pulling_and_starting')
+        status, body = agent_request('/deploy', {'app_id': app_id, 'subdomain': subdomain})
+        if status >= 400 or not body.get('ok'):
+            set_job(job_id, status='failed', stage='failed', error=body.get('error', 'Deployment failed'))
+            return
+        set_job(job_id, status='success', stage='ready', result=body)
+    except Exception as e:
+        set_job(job_id, status='failed', stage='failed', error=str(e))
+
+
 remove_route('/api/deploy', {'POST'})
 remove_route('/api/deployments', {'GET'})
 remove_route('/api/health', {'GET'})
 
 
-@api.post('/api/deploy')
-def deploy_v2(req: DeployRequest, x_novec_admin_pin: Optional[str] = Header(default=None)):
+@api.post('/api/deploy', status_code=202)
+def deploy_v3(req: DeployRequest, x_novec_admin_pin: Optional[str] = Header(default=None)):
     require_admin(x_novec_admin_pin)
     app = app_by_id(req.app_id)
     if not app:
@@ -75,10 +100,21 @@ def deploy_v2(req: DeployRequest, x_novec_admin_pin: Optional[str] = Header(defa
         raise HTTPException(status_code=400, detail='Invalid subdomain')
     if sub in {'store','n8n','www','api','dev','ssh','mail'}:
         raise HTTPException(status_code=400, detail='Reserved subdomain')
-    status, body = agent_request('/deploy', {'app_id': req.app_id, 'subdomain': sub})
-    if status >= 400 or not body.get('ok'):
-        raise HTTPException(status_code=400 if status < 500 else 502, detail=body.get('error', 'Deployment failed'))
-    return body
+
+    job_id = uuid.uuid4().hex
+    set_job(job_id, status='queued', stage='queued', app_id=req.app_id, subdomain=sub, created_at=time.time())
+    threading.Thread(target=run_deploy_job, args=(job_id, req.app_id, sub), daemon=True).start()
+    return {'ok': True, 'deployment_id': job_id, 'status': 'queued'}
+
+
+@api.get('/api/deploy-status/{job_id}')
+def deploy_status(job_id: str, x_novec_admin_pin: Optional[str] = Header(default=None)):
+    require_admin(x_novec_admin_pin)
+    with DEPLOY_JOBS_LOCK:
+        job = DEPLOY_JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail='Deployment job not found')
+        return dict(job)
 
 
 @api.get('/api/deployments')
@@ -109,4 +145,5 @@ def health_v2():
         'icon_source': 'dashboard-icons+website',
         'deploy_agent': agent_ok,
         'one_click_templates': len(ONE_CLICK_APPS),
+        'async_deploy': True,
     }
