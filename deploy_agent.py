@@ -16,7 +16,7 @@ SECRET_FILE = DATA / "deploy-agent-secret.txt"
 HELPER = BASE / "deploy_helper.py"
 HOST = "0.0.0.0"
 PORT = 18791
-LOCK = threading.Lock()
+LOCK = threading.RLock()
 
 
 def job_path(job_id):
@@ -30,12 +30,37 @@ def save_job(job):
     tmp.replace(job_path(job['id']))
 
 
+def recover_completed_job(job):
+    if job.get('status') not in {'running', 'queued'}:
+        return job
+    for line in reversed(job.get('log') or []):
+        text = str(line).strip()
+        if not (text.startswith('{') and text.endswith('}')):
+            continue
+        try:
+            candidate = json.loads(text)
+        except Exception:
+            continue
+        if isinstance(candidate, dict) and candidate.get('ok') is True and candidate.get('url'):
+            job['status'] = 'success'
+            job['result'] = candidate
+            job['error'] = None
+            job['finished_at'] = job.get('finished_at') or int(time.time())
+            job['updated_at'] = int(time.time())
+            if not any('Deployment completed successfully.' in str(x) for x in (job.get('log') or [])):
+                job.setdefault('log', []).append('Deployment completed successfully.')
+            save_job(job)
+            return job
+    return job
+
+
 def load_job(job_id):
     p = job_path(job_id)
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text(encoding='utf-8'))
+        job = json.loads(p.read_text(encoding='utf-8'))
+        return recover_completed_job(job)
     except Exception:
         return None
 
