@@ -125,14 +125,14 @@ def main():
         fail("CLOUDFLARED_NOT_FOUND", 5)
 
     host = f"{subdomain}.novec.online"
-    container = safe_name(f"novec-{app_id}-{subdomain}")
     registry = load_registry()
+    previous = registry.get(host, {}) if isinstance(registry.get(host, {}), dict) else {}
+    container = previous.get('container') or safe_name(f"novec-{app_id}-{subdomain}")
 
     log(f"[2/7] Pulling image {tpl['image']}…")
     inspect = subprocess.run([docker, "inspect", container], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if inspect.returncode != 0:
         run([docker, "pull", tpl["image"]])
-
         log("[3/7] Creating Docker container…")
         cmd = [
             docker, "run", "-d",
@@ -186,7 +186,7 @@ def main():
         "port": host_port,
         "url": f"https://{host}",
         "status": "running",
-        "created_at": registry.get(host, {}).get('created_at') or int(time.time()),
+        "created_at": previous.get('created_at') or int(time.time()),
         "updated_at": int(time.time()),
     }
     save_registry(registry)
