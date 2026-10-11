@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 import json
-import os
-import socketserver
 import subprocess
 import sys
-from http.server import BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 DATA = BASE / "data"
-SOCKET_PATH = DATA / "deploy.sock"
 SECRET_FILE = DATA / "deploy-agent-secret.txt"
 HELPER = BASE / "deploy_helper.py"
+HOST = "0.0.0.0"
+PORT = 18791
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -29,6 +28,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
         self.close_connection = True
+
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_json(200, {"ok": True})
+        else:
+            self.send_json(404, {"ok": False, "error": "NOT_FOUND"})
 
     def do_POST(self):
         if self.path != "/deploy":
@@ -81,20 +86,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, response)
 
 
-class UnixHTTPServer(socketserver.UnixStreamServer):
-    allow_reuse_address = True
-
-
 def main():
     DATA.mkdir(parents=True, exist_ok=True)
-    if SOCKET_PATH.exists() or SOCKET_PATH.is_socket():
-        try:
-            SOCKET_PATH.unlink()
-        except FileNotFoundError:
-            pass
-    server = UnixHTTPServer(str(SOCKET_PATH), Handler)
-    os.chmod(SOCKET_PATH, 0o666)
-    print(f"NOVEC deploy agent listening on {SOCKET_PATH}", flush=True)
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    print(f"NOVEC deploy agent listening on {HOST}:{PORT}", flush=True)
     server.serve_forever()
 
 
