@@ -171,7 +171,7 @@ def main():
 
     log(f"[5/7] Registering Cloudflare hostname {host}…")
     if host not in registry:
-        route = subprocess.run([cloudflared, "tunnel", "route", "dns", TUNNEL_ID, host], capture_output=True, text=True)
+        route = subprocess.run([cloudflared, "tunnel", "route", "dns", "--overwrite-dns", TUNNEL_ID, host], capture_output=True, text=True)
         if route.stdout:
             log(route.stdout.strip())
         if route.returncode != 0:
