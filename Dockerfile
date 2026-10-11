@@ -8,4 +8,4 @@ COPY server.py .
 COPY static ./static
 RUN mkdir -p /data
 EXPOSE 8788
-CMD ["uvicorn","app:api","--host","0.0.0.0","--port","8788"]
+CMD ["uvicorn","server:api","--host","0.0.0.0","--port","8788"]
