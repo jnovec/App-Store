@@ -11,6 +11,33 @@
     return p.trim();
   }
 
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  async function pollDeployment(id, adminPin, button) {
+    const started = Date.now();
+    for (let i = 0; i < 180; i++) {
+      await sleep(2000);
+      const r = await fetch(`/api/deploy-status/${encodeURIComponent(id)}`, {
+        headers: { 'X-NOVEC-Admin-Pin': adminPin }
+      });
+      let data = {};
+      try { data = await r.json(); } catch (_) {}
+      if (r.status === 401) {
+        sessionStorage.removeItem('novecAdminPin');
+        throw new Error('Neplatný admin PIN. Zkus Deploy znovu.');
+      }
+      if (!r.ok) throw new Error(data.detail || data.error || `Status check failed (${r.status})`);
+
+      const sec = Math.max(1, Math.round((Date.now() - started) / 1000));
+      if (button && data.status !== 'success' && data.status !== 'failed') {
+        button.textContent = `Deploying… ${sec}s`;
+      }
+      if (data.status === 'success') return data.result || data;
+      if (data.status === 'failed') throw new Error(data.error || 'Deployment failed');
+    }
+    throw new Error('Deployment timeout. Proces může stále běžet na serveru.');
+  }
+
   async function deploy(app) {
     const sub = (prompt('Subdoména pro aplikaci:', app.id) || '').trim().toLowerCase();
     if (!sub) return;
@@ -20,7 +47,7 @@
     const button = document.querySelector('#detail .deploy-live-btn');
     if (button) {
       button.disabled = true;
-      button.textContent = 'Deploying…';
+      button.textContent = 'Starting…';
     }
 
     try {
@@ -38,12 +65,17 @@
         sessionStorage.removeItem('novecAdminPin');
         throw new Error('Neplatný admin PIN. Zkus Deploy znovu.');
       }
-      if (!r.ok) {
-        throw new Error(data.detail || data.error || `Deployment failed (${r.status})`);
+      if (!r.ok) throw new Error(data.detail || data.error || `Deployment failed (${r.status})`);
+
+      let result = data;
+      if (data.deployment_id) {
+        if (button) button.textContent = 'Deploying… 0s';
+        result = await pollDeployment(data.deployment_id, adminPin, button);
       }
+
       if (button) button.textContent = 'Deployed ✓';
-      if (confirm(`Hotovo. ${app.name} běží na:\n${data.url}\n\nOtevřít teď?`)) {
-        window.open(data.url, '_blank', 'noopener');
+      if (confirm(`Hotovo. ${app.name} běží na:\n${result.url}\n\nOtevřít teď?`)) {
+        window.open(result.url, '_blank', 'noopener');
       }
     } catch (e) {
       alert(e.message || String(e));
