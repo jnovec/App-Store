@@ -1,2 +1,18 @@
+from fastapi.responses import HTMLResponse
+
+import server
 from server import api
 import undeploy_api  # noqa: F401
+
+api.router.routes = [
+    route for route in api.router.routes
+    if not (getattr(route, 'path', None) == '/' and 'GET' in set(getattr(route, 'methods', set()) or set()))
+]
+
+
+@api.get('/')
+def root_ext():
+    response = server.root_v2()
+    html = response.body.decode('utf-8')
+    html = html.replace('</head>', '<link rel="stylesheet" href="/static/deploy-modals.css?v=1"></head>')
+    return HTMLResponse(html)
