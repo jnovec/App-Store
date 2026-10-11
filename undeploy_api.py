@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app import AGENT_SECRET_FILE, DEPLOYMENTS, api, require_admin
 
-UNDEPLOY_AGENT_URL = 'http://host.docker.internal:18792'
+UNDEPLOY_AGENT_URL = 'http://novec-undeploy-agent:18792'
 RESERVED_HOSTS = {
     'store.novec.online',
     'n8n.novec.online',
