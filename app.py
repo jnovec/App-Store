@@ -12,9 +12,9 @@ REPO = DATA / 'awesome-selfhosted-data'
 CATALOG = DATA / 'catalog.json'
 ICONS = DATA / 'icons'
 ICON_CACHE_VERSION = DATA / 'icon-cache-version.txt'
-ICON_CACHE_VERSION_VALUE = 'website-only-v2'
+ICON_CACHE_VERSION_VALUE = 'website-only-v3-skip-github-host'
 
-api = FastAPI(title='NOVEC App Store', version='0.2.1')
+api = FastAPI(title='NOVEC App Store', version='0.2.2')
 
 def ensure_icon_cache_version():
     ICONS.mkdir(parents=True, exist_ok=True)
@@ -130,6 +130,9 @@ def resolve_icon(app):
     if website:
         try:
             parsed = urllib.parse.urlparse(website)
+            host = (parsed.hostname or '').lower()
+            if host == 'github.com' or host.endswith('.github.com'):
+                return None
             root = f'{parsed.scheme}://{parsed.netloc}'
             for path in ('/favicon.ico','/apple-touch-icon.png','/favicon.png'):
                 got = download_icon(root + path, base)
