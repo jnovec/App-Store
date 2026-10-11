@@ -1,8 +1,8 @@
-import os, json, subprocess, threading, time, re
+import os, json, subprocess, threading, time, re, urllib.request, urllib.parse, mimetypes
 from pathlib import Path
 from typing import Optional
 import yaml
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -10,11 +10,13 @@ BASE = Path('/app')
 DATA = Path('/data')
 REPO = DATA / 'awesome-selfhosted-data'
 CATALOG = DATA / 'catalog.json'
+ICONS = DATA / 'icons'
 
-api = FastAPI(title='NOVEC App Store', version='0.1.0')
+api = FastAPI(title='NOVEC App Store', version='0.2.0')
 
 def sync_catalog():
     DATA.mkdir(parents=True, exist_ok=True)
+    ICONS.mkdir(parents=True, exist_ok=True)
     if not REPO.exists():
         subprocess.run(['git','clone','--depth','1','https://github.com/awesome-selfhosted/awesome-selfhosted-data.git',str(REPO)], check=True)
     else:
@@ -44,7 +46,8 @@ def sync_catalog():
                 'version': release.get('tag') if isinstance(release, dict) else '',
                 'archived': archived,
                 'ready': dockerish and not archived,
-                'initials': ''.join([p[0] for p in re.split(r'[\s\-_]+', name) if p])[:2].upper()
+                'initials': ''.join([p[0] for p in re.split(r'[\s\-_]+', name) if p])[:2].upper(),
+                'icon': f'/api/icon/{urllib.parse.quote(f.stem, safe="")}'
             })
         except Exception:
             pass
@@ -64,6 +67,67 @@ def background_sync():
         except Exception as e:
             print('sync failed:', e, flush=True)
         time.sleep(21600)
+
+def safe_icon_id(app_id: str):
+    return re.sub(r'[^A-Za-z0-9._-]+', '_', app_id)[:180]
+
+def app_by_id(app_id: str):
+    cat = load_catalog()
+    for app in cat['apps']:
+        if app['id'] == app_id:
+            return app
+    return None
+
+def cached_icon(app_id: str):
+    sid = safe_icon_id(app_id)
+    for ext in ('png','jpg','jpeg','ico','webp','svg'):
+        p = ICONS / f'{sid}.{ext}'
+        if p.exists() and p.stat().st_size > 64:
+            return p
+    return None
+
+def download_icon(url: str, target_base: Path):
+    if not url or not url.startswith(('http://','https://')):
+        return None
+    req = urllib.request.Request(url, headers={'User-Agent':'NOVEC-App-Store/1.0','Accept':'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as r:
+            ctype = (r.headers.get('Content-Type') or '').split(';')[0].lower()
+            data = r.read(1024 * 1024)
+            if len(data) < 64 or (ctype and not ctype.startswith('image/')):
+                return None
+            ext = mimetypes.guess_extension(ctype) or Path(urllib.parse.urlparse(url).path).suffix or '.png'
+            ext = ext.lower()
+            if ext == '.jpe': ext = '.jpg'
+            if ext not in ('.png','.jpg','.jpeg','.ico','.webp','.svg'): ext = '.png'
+            out = Path(str(target_base) + ext)
+            out.write_bytes(data)
+            return out
+    except Exception:
+        return None
+
+def resolve_icon(app):
+    ICONS.mkdir(parents=True, exist_ok=True)
+    existing = cached_icon(app['id'])
+    if existing:
+        return existing
+    base = ICONS / safe_icon_id(app['id'])
+    website = app.get('website') or ''
+    if website:
+        try:
+            parsed = urllib.parse.urlparse(website)
+            root = f'{parsed.scheme}://{parsed.netloc}'
+            for path in ('/favicon.ico','/apple-touch-icon.png','/favicon.png'):
+                got = download_icon(root + path, base)
+                if got: return got
+        except Exception:
+            pass
+    source = app.get('source') or ''
+    m = re.match(r'https?://github\.com/([^/]+)/', source)
+    if m:
+        got = download_icon(f'https://github.com/{m.group(1)}.png?size=128', base)
+        if got: return got
+    return None
 
 @api.on_event('startup')
 def startup():
@@ -99,6 +163,16 @@ def apps(q: str = '', tag: str = '', ready: Optional[bool] = None, limit: int = 
         'apps': rows[:limit]
     }
 
+@api.get('/api/icon/{app_id}')
+def icon(app_id: str):
+    app = app_by_id(app_id)
+    if not app:
+        raise HTTPException(status_code=404, detail='App not found')
+    path = resolve_icon(app)
+    if not path:
+        raise HTTPException(status_code=404, detail='Icon not available')
+    return FileResponse(path, headers={'Cache-Control':'public, max-age=604800, immutable'})
+
 @api.post('/api/sync')
 def sync():
     data = sync_catalog()
@@ -107,7 +181,8 @@ def sync():
 @api.get('/api/health')
 def health():
     cat = load_catalog()
-    return {'ok': True, 'apps': cat['count']}
+    cached = len(list(ICONS.glob('*'))) if ICONS.exists() else 0
+    return {'ok': True, 'apps': cat['count'], 'cached_icons': cached}
 
 @api.get('/')
 def root():
