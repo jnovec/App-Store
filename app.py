@@ -14,7 +14,7 @@ ICONS = DATA / 'icons'
 ICON_CACHE_VERSION = DATA / 'icon-cache-version.txt'
 ICON_CACHE_VERSION_VALUE = 'website-only-v3-skip-github-host'
 
-api = FastAPI(title='NOVEC App Store', version='0.2.2')
+api = FastAPI(title='NOVEC App Store', version='0.2.3')
 
 def ensure_icon_cache_version():
     ICONS.mkdir(parents=True, exist_ok=True)
@@ -61,7 +61,7 @@ def sync_catalog():
                 'archived': archived,
                 'ready': dockerish and not archived,
                 'initials': ''.join([p[0] for p in re.split(r'[\s\-_]+', name) if p])[:2].upper(),
-                'icon': f'/api/icon/{urllib.parse.quote(f.stem, safe="")}'
+                'icon': f'/api/icon/{urllib.parse.quote(f.stem, safe="")}?v=3'
             })
         except Exception:
             pass
