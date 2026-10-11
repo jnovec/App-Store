@@ -1,6 +1,5 @@
 import json
 import re
-import time
 import urllib.request
 from typing import Optional
 
@@ -15,11 +14,10 @@ from app import (
     AGENT_SECRET_FILE,
     DEPLOYMENTS,
     DeployRequest,
-    app_by_id,
     load_catalog,
     require_admin,
 )
-from template_catalog import load_templates, match_app
+from template_catalog import load_templates, match_app, slugify
 
 AGENT_URL = 'http://host.docker.internal:18791'
 RESERVED = {'store','n8n','www','api','dev','ssh','mail'}
@@ -37,7 +35,7 @@ def remove_route(path, methods=None):
 
 
 def agent_request(path, payload=None, timeout=8, auth=True):
-    headers = {'User-Agent': 'NOVEC-App-Store/0.5'}
+    headers = {'User-Agent': 'NOVEC-App-Store/0.6'}
     if auth:
         secret = AGENT_SECRET_FILE.read_text(encoding='utf-8').strip() if AGENT_SECRET_FILE.exists() else ''
         if not secret:
@@ -68,7 +66,8 @@ def enriched_catalog():
     cat = load_catalog()
     templates = load_templates(DATA)
     apps = []
-    one_click = 0
+    matched = set()
+
     for original in cat['apps']:
         app = dict(original)
         key, tpl = match_app(app, templates)
@@ -76,10 +75,48 @@ def enriched_catalog():
         app['template_key'] = key or ''
         app['deploy_image'] = tpl.get('image') if tpl else ''
         app['deploy_source'] = tpl.get('source') if tpl else ''
-        if tpl:
-            one_click += 1
+        if key:
+            matched.add(key)
         apps.append(app)
+
+    for key, tpl in templates.items():
+        if key in matched:
+            continue
+        name = tpl.get('title') or tpl.get('name') or key
+        categories = tpl.get('categories') or ['Docker']
+        apps.append({
+            'id': 'pt-' + key,
+            'name': name,
+            'description': tpl.get('description') or ('Deployable Docker application: ' + name),
+            'tags': categories,
+            'platforms': ['Docker'],
+            'source': '',
+            'website': '',
+            'stars': 0,
+            'updated': '',
+            'version': '',
+            'archived': False,
+            'ready': True,
+            'initials': ''.join([p[0] for p in re.split(r'[\s\-_]+', name) if p])[:2].upper(),
+            'icon': '',
+            'one_click': True,
+            'template_key': key,
+            'deploy_image': tpl.get('image') or '',
+            'deploy_source': tpl.get('source') or 'portainer',
+            'catalog_source': 'Portainer templates',
+        })
+
+    one_click = sum(1 for a in apps if a.get('one_click'))
     return cat, apps, templates, one_click
+
+
+def find_enriched_app(app_id):
+    _, apps, templates, _ = enriched_catalog()
+    for app in apps:
+        if app.get('id') == app_id:
+            key = app.get('template_key') or ''
+            return app, key, templates.get(key) if key else None
+    return None, '', None
 
 
 remove_route('/api/apps', {'GET'})
@@ -101,20 +138,22 @@ def apps_v2(q: str = '', tag: str = '', ready: Optional[bool] = None, limit: int
     if ready is not None:
         rows = [a for a in rows if a['ready'] == ready]
     rows = sorted(rows, key=lambda a: (not a.get('one_click', False), a['archived'], -int(a['stars'] or 0), a['name'].lower()))
-    active_count = sum(1 for a in cat['apps'] if not a['archived'])
-    ready_count = sum(1 for a in cat['apps'] if a['ready'])
+    active_count = sum(1 for a in rows if not a.get('archived')) if (q or tag or ready is not None) else sum(1 for a in enriched_catalog()[1] if not a.get('archived'))
+    all_apps = enriched_catalog()[1]
+    ready_count = sum(1 for a in all_apps if a.get('ready'))
     tags = {}
-    for a in cat['apps']:
-        for t in a['tags']:
+    for a in all_apps:
+        for t in a.get('tags') or []:
             tags[t] = tags.get(t, 0) + 1
     return {
         'synced_at': cat['synced_at'],
         'stats': {
-            'total': cat['count'],
-            'active': active_count,
+            'total': len(all_apps),
+            'active': sum(1 for a in all_apps if not a.get('archived')),
             'ready': ready_count,
             'one_click': one_click_count,
             'safe_templates': len(templates),
+            'awesome_selfhosted': cat['count'],
         },
         'top_tags': sorted(tags.items(), key=lambda x: -x[1])[:40],
         'apps': rows[:limit],
@@ -124,11 +163,9 @@ def apps_v2(q: str = '', tag: str = '', ready: Optional[bool] = None, limit: int
 @api.post('/api/deploy', status_code=202)
 def deploy_v4(req: DeployRequest, x_novec_admin_pin: Optional[str] = Header(default=None)):
     require_admin(x_novec_admin_pin)
-    app = app_by_id(req.app_id)
+    app, template_key, tpl = find_enriched_app(req.app_id)
     if not app:
         raise HTTPException(status_code=404, detail='App not found')
-    templates = load_templates(DATA)
-    template_key, tpl = match_app(app, templates)
     if not tpl or not template_key:
         raise HTTPException(status_code=400, detail='This app does not have a safe one-click template yet')
     sub = req.subdomain.strip().lower()
@@ -189,7 +226,7 @@ def deployments_v3(x_novec_admin_pin: Optional[str] = Header(default=None)):
 
 @api.get('/api/health')
 def health_v3():
-    cat, _, templates, one_click_count = enriched_catalog()
+    cat, apps, templates, one_click_count = enriched_catalog()
     cached = len([p for p in ICONS.glob('*') if p.suffix != '.miss']) if ICONS.exists() else 0
     agent_ok = False
     agent_mode = ''
@@ -201,7 +238,8 @@ def health_v3():
         agent_ok = False
     return {
         'ok': True,
-        'apps': cat['count'],
+        'apps': len(apps),
+        'awesome_selfhosted_apps': cat['count'],
         'cached_icons': cached,
         'icon_source': 'dashboard-icons+website',
         'deploy_agent': agent_ok,
@@ -216,6 +254,6 @@ def health_v3():
 @api.get('/')
 def root_v2():
     html = (BASE/'static'/'index.html').read_text(encoding='utf-8')
-    html = html.replace('</head>', '<link rel="stylesheet" href="/static/icon-enhancer.css"><link rel="stylesheet" href="/static/deploy-enhancer.css"><link rel="stylesheet" href="/static/deploy-console.css?v=1"></head>')
-    html = html.replace('</body>', '<script src="/static/icon-enhancer.js"></script><script src="/static/deploy-enhancer.js"></script><script src="/static/deploy-console.js?v=1"></script></body>')
+    html = html.replace('</head>', '<link rel="stylesheet" href="/static/icon-enhancer.css"><link rel="stylesheet" href="/static/deploy-enhancer.css"><link rel="stylesheet" href="/static/deploy-console.css?v=2"></head>')
+    html = html.replace('</body>', '<script src="/static/icon-enhancer.js"></script><script src="/static/deploy-enhancer.js"></script><script src="/static/deploy-console.js?v=2"></script></body>')
     return HTMLResponse(html)
