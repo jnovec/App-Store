@@ -1,17 +1,15 @@
 import json
-import threading
+import re
 import time
 import urllib.request
-import uuid
 from typing import Optional
 
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Query
 
 from app import (
     api,
     DATA,
     ICONS,
-    ONE_CLICK_APPS,
     AGENT_SECRET_FILE,
     DEPLOYMENTS,
     DeployRequest,
@@ -19,10 +17,10 @@ from app import (
     load_catalog,
     require_admin,
 )
+from template_catalog import load_templates, match_app
 
 AGENT_URL = 'http://host.docker.internal:18791'
-DEPLOY_JOBS = {}
-DEPLOY_JOBS_LOCK = threading.Lock()
+RESERVED = {'store','n8n','www','api','dev','ssh','mail'}
 
 
 def remove_route(path, methods=None):
@@ -36,17 +34,20 @@ def remove_route(path, methods=None):
     api.router.routes = keep
 
 
-def agent_request(path, payload=None, timeout=310):
-    headers = {'User-Agent': 'NOVEC-App-Store/0.4'}
-    data = None
-    if payload is not None:
+def agent_request(path, payload=None, timeout=8, auth=True):
+    headers = {'User-Agent': 'NOVEC-App-Store/0.5'}
+    if auth:
         secret = AGENT_SECRET_FILE.read_text(encoding='utf-8').strip() if AGENT_SECRET_FILE.exists() else ''
         if not secret:
             raise HTTPException(status_code=503, detail='Deploy agent secret missing')
         headers['X-NOVEC-Agent-Secret'] = secret
+    data = None
+    method = 'GET'
+    if payload is not None:
         headers['Content-Type'] = 'application/json'
         data = json.dumps(payload).encode('utf-8')
-    req = urllib.request.Request(AGENT_URL + path, data=data, headers=headers, method='POST' if payload is not None else 'GET')
+        method = 'POST'
+    req = urllib.request.Request(AGENT_URL + path, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             body = json.loads(r.read().decode('utf-8'))
@@ -61,81 +62,138 @@ def agent_request(path, payload=None, timeout=310):
         raise HTTPException(status_code=503, detail=f'Deploy agent unavailable: {e}')
 
 
-def set_job(job_id, **fields):
-    with DEPLOY_JOBS_LOCK:
-        job = DEPLOY_JOBS.get(job_id, {})
-        job.update(fields)
-        job['updated_at'] = time.time()
-        DEPLOY_JOBS[job_id] = job
+def enriched_catalog():
+    cat = load_catalog()
+    templates = load_templates(DATA)
+    apps = []
+    one_click = 0
+    for original in cat['apps']:
+        app = dict(original)
+        key, tpl = match_app(app, templates)
+        app['one_click'] = bool(tpl)
+        app['template_key'] = key or ''
+        app['deploy_image'] = tpl.get('image') if tpl else ''
+        app['deploy_source'] = tpl.get('source') if tpl else ''
+        if tpl:
+            one_click += 1
+        apps.append(app)
+    return cat, apps, templates, one_click
 
 
-def run_deploy_job(job_id, app_id, subdomain):
-    try:
-        set_job(job_id, status='running', stage='pulling_and_starting')
-        status, body = agent_request('/deploy', {'app_id': app_id, 'subdomain': subdomain})
-        if status >= 400 or not body.get('ok'):
-            set_job(job_id, status='failed', stage='failed', error=body.get('error', 'Deployment failed'))
-            return
-        set_job(job_id, status='success', stage='ready', result=body)
-    except Exception as e:
-        set_job(job_id, status='failed', stage='failed', error=str(e))
-
-
+remove_route('/api/apps', {'GET'})
 remove_route('/api/deploy', {'POST'})
+remove_route('/api/deploy-status/{job_id}', {'GET'})
 remove_route('/api/deployments', {'GET'})
 remove_route('/api/health', {'GET'})
 
 
+@api.get('/api/apps')
+def apps_v2(q: str = '', tag: str = '', ready: Optional[bool] = None, limit: int = Query(120, ge=1, le=2000)):
+    cat, rows, templates, one_click_count = enriched_catalog()
+    if q:
+        needle = q.lower()
+        rows = [a for a in rows if needle in (a['name'] + ' ' + a['description'] + ' ' + ' '.join(a['tags'])).lower()]
+    if tag:
+        rows = [a for a in rows if tag.lower() in [str(t).lower() for t in a['tags']]]
+    if ready is not None:
+        rows = [a for a in rows if a['ready'] == ready]
+    rows = sorted(rows, key=lambda a: (not a.get('one_click', False), a['archived'], -int(a['stars'] or 0), a['name'].lower()))
+    active_count = sum(1 for a in cat['apps'] if not a['archived'])
+    ready_count = sum(1 for a in cat['apps'] if a['ready'])
+    tags = {}
+    for a in cat['apps']:
+        for t in a['tags']:
+            tags[t] = tags.get(t, 0) + 1
+    return {
+        'synced_at': cat['synced_at'],
+        'stats': {
+            'total': cat['count'],
+            'active': active_count,
+            'ready': ready_count,
+            'one_click': one_click_count,
+            'safe_templates': len(templates),
+        },
+        'top_tags': sorted(tags.items(), key=lambda x: -x[1])[:40],
+        'apps': rows[:limit],
+    }
+
+
 @api.post('/api/deploy', status_code=202)
-def deploy_v3(req: DeployRequest, x_novec_admin_pin: Optional[str] = Header(default=None)):
+def deploy_v4(req: DeployRequest, x_novec_admin_pin: Optional[str] = Header(default=None)):
     require_admin(x_novec_admin_pin)
     app = app_by_id(req.app_id)
     if not app:
         raise HTTPException(status_code=404, detail='App not found')
-    if req.app_id not in ONE_CLICK_APPS:
-        raise HTTPException(status_code=400, detail='This app does not have a reviewed one-click template yet')
+    templates = load_templates(DATA)
+    template_key, tpl = match_app(app, templates)
+    if not tpl or not template_key:
+        raise HTTPException(status_code=400, detail='This app does not have a safe one-click template yet')
     sub = req.subdomain.strip().lower()
-    import re
     if not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', sub):
         raise HTTPException(status_code=400, detail='Invalid subdomain')
-    if sub in {'store','n8n','www','api','dev','ssh','mail'}:
+    if sub in RESERVED:
         raise HTTPException(status_code=400, detail='Reserved subdomain')
-
-    job_id = uuid.uuid4().hex
-    set_job(job_id, status='queued', stage='queued', app_id=req.app_id, subdomain=sub, created_at=time.time())
-    threading.Thread(target=run_deploy_job, args=(job_id, req.app_id, sub), daemon=True).start()
-    return {'ok': True, 'deployment_id': job_id, 'status': 'queued'}
+    status, body = agent_request('/deploy', {
+        'app_id': req.app_id,
+        'subdomain': sub,
+        'template_key': template_key,
+    }, timeout=5, auth=True)
+    if status >= 400 or not body.get('ok'):
+        raise HTTPException(status_code=400 if status < 500 else 502, detail=body.get('error', 'Deployment could not start'))
+    return {
+        'ok': True,
+        'deployment_id': body.get('job_id'),
+        'status': body.get('status', 'queued'),
+        'app_id': req.app_id,
+        'subdomain': sub,
+        'template_key': template_key,
+    }
 
 
 @api.get('/api/deploy-status/{job_id}')
-def deploy_status(job_id: str, x_novec_admin_pin: Optional[str] = Header(default=None)):
+def deploy_status_v2(job_id: str, x_novec_admin_pin: Optional[str] = Header(default=None)):
     require_admin(x_novec_admin_pin)
-    with DEPLOY_JOBS_LOCK:
-        job = DEPLOY_JOBS.get(job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail='Deployment job not found')
-        return dict(job)
+    if not re.fullmatch(r'[a-f0-9]{8,64}', job_id):
+        raise HTTPException(status_code=400, detail='Invalid deployment id')
+    status, body = agent_request(f'/job/{job_id}', timeout=4, auth=True)
+    if status == 404:
+        raise HTTPException(status_code=404, detail='Deployment job not found')
+    if status >= 400:
+        raise HTTPException(status_code=502, detail=body.get('error', 'Deploy agent error'))
+    return body
 
 
 @api.get('/api/deployments')
-def deployments_v2(x_novec_admin_pin: Optional[str] = Header(default=None)):
+def deployments_v3(x_novec_admin_pin: Optional[str] = Header(default=None)):
     require_admin(x_novec_admin_pin)
     if not DEPLOYMENTS.exists():
-        return {'deployments': {}}
+        return {'deployments': []}
     try:
-        return {'deployments': json.loads(DEPLOYMENTS.read_text(encoding='utf-8'))}
+        raw = json.loads(DEPLOYMENTS.read_text(encoding='utf-8'))
     except Exception:
-        return {'deployments': {}}
+        raw = {}
+    rows = []
+    for host, item in raw.items():
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        row['host'] = host
+        row['url'] = row.get('url') or f'https://{host}'
+        rows.append(row)
+    rows.sort(key=lambda x: int(x.get('created_at') or 0), reverse=True)
+    return {'deployments': rows, 'count': len(rows)}
 
 
 @api.get('/api/health')
-def health_v2():
-    cat = load_catalog()
+def health_v3():
+    cat, _, templates, one_click_count = enriched_catalog()
     cached = len([p for p in ICONS.glob('*') if p.suffix != '.miss']) if ICONS.exists() else 0
     agent_ok = False
+    agent_mode = ''
     try:
-        _, result = agent_request('/health', timeout=2)
+        _, result = agent_request('/health', timeout=2, auth=False)
         agent_ok = bool(result.get('ok'))
+        agent_mode = result.get('mode') or ''
     except Exception:
         agent_ok = False
     return {
@@ -144,6 +202,9 @@ def health_v2():
         'cached_icons': cached,
         'icon_source': 'dashboard-icons+website',
         'deploy_agent': agent_ok,
-        'one_click_templates': len(ONE_CLICK_APPS),
+        'deploy_agent_mode': agent_mode,
+        'one_click_apps': one_click_count,
+        'safe_templates': len(templates),
         'async_deploy': True,
+        'deploy_ui': 'floating-terminal',
     }
