@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Optional
 import yaml
 from fastapi import FastAPI, Query, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 BASE = Path('/app')
@@ -186,6 +186,9 @@ def health():
 
 @api.get('/')
 def root():
-    return FileResponse(BASE/'static'/'index.html')
+    html = (BASE/'static'/'index.html').read_text(encoding='utf-8')
+    html = html.replace('</head>', '<link rel="stylesheet" href="/static/icon-enhancer.css"></head>')
+    html = html.replace('</body>', '<script src="/static/icon-enhancer.js"></script></body>')
+    return HTMLResponse(html)
 
 api.mount('/static', StaticFiles(directory=BASE/'static'), name='static')
