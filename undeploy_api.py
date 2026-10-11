@@ -1,15 +1,17 @@
 import json
 import re
-import urllib.error
-import urllib.request
+import time
+import uuid
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Header, HTTPException
 from pydantic import BaseModel
 
-from app import AGENT_SECRET_FILE, DEPLOYMENTS, api, require_admin
+from app import DEPLOYMENTS, api, require_admin
 
-UNDEPLOY_AGENT_URL = 'http://novec-undeploy-agent:18792'
+DATA = Path('/data')
+UNDEPLOY_JOBS = DATA / 'undeploy-jobs'
 RESERVED_HOSTS = {
     'store.novec.online',
     'n8n.novec.online',
@@ -26,32 +28,16 @@ class UndeployRequest(BaseModel):
     purge_data: bool = False
 
 
-def undeploy_agent_request(path, payload=None, timeout=6):
-    secret = AGENT_SECRET_FILE.read_text(encoding='utf-8').strip() if AGENT_SECRET_FILE.exists() else ''
-    if not secret:
-        raise HTTPException(status_code=503, detail='Undeploy agent secret missing')
-    headers = {
-        'User-Agent': 'NOVEC-App-Store/0.7',
-        'X-NOVEC-Agent-Secret': secret,
-    }
-    data = None
-    method = 'GET'
-    if payload is not None:
-        headers['Content-Type'] = 'application/json'
-        data = json.dumps(payload).encode('utf-8')
-        method = 'POST'
-    request = urllib.request.Request(UNDEPLOY_AGENT_URL + path, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, json.loads(response.read().decode('utf-8'))
-    except urllib.error.HTTPError as exc:
-        try:
-            body = json.loads(exc.read().decode('utf-8'))
-        except Exception:
-            body = {'ok': False, 'error': str(exc)}
-        return exc.code, body
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f'Undeploy agent unavailable: {exc}')
+def job_path(job_id: str) -> Path:
+    return UNDEPLOY_JOBS / f'{job_id}.json'
+
+
+def write_job(job):
+    UNDEPLOY_JOBS.mkdir(parents=True, exist_ok=True)
+    path = job_path(job['id'])
+    tmp = path.with_suffix('.tmp')
+    tmp.write_text(json.dumps(job, ensure_ascii=False), encoding='utf-8')
+    tmp.replace(path)
 
 
 @api.post('/api/undeploy', status_code=202)
@@ -72,16 +58,27 @@ def undeploy(req: UndeployRequest, x_novec_admin_pin: Optional[str] = Header(def
     if hostname not in registry:
         raise HTTPException(status_code=404, detail='Deployment not found')
 
-    status, body = undeploy_agent_request('/undeploy', {
+    now = int(time.time())
+    job_id = uuid.uuid4().hex[:16]
+    job = {
+        'id': job_id,
+        'action': 'undeploy',
         'hostname': hostname,
         'purge_data': bool(req.purge_data),
-    }, timeout=5)
-    if status >= 400 or not body.get('ok'):
-        raise HTTPException(status_code=400 if status < 500 else 502, detail=body.get('error', 'Removal could not start'))
+        'status': 'queued',
+        'created_at': now,
+        'updated_at': now,
+        'started_at': None,
+        'finished_at': None,
+        'result': None,
+        'error': None,
+        'log': ['Removal queued. Waiting for NOVEC n8n worker…'],
+    }
+    write_job(job)
     return {
         'ok': True,
-        'removal_id': body.get('job_id'),
-        'status': body.get('status', 'queued'),
+        'removal_id': job_id,
+        'status': 'queued',
         'hostname': hostname,
         'purge_data': bool(req.purge_data),
     }
@@ -92,9 +89,10 @@ def undeploy_status(job_id: str, x_novec_admin_pin: Optional[str] = Header(defau
     require_admin(x_novec_admin_pin)
     if not re.fullmatch(r'[a-f0-9]{8,64}', job_id):
         raise HTTPException(status_code=400, detail='Invalid removal id')
-    status, body = undeploy_agent_request('/job/' + job_id, timeout=4)
-    if status == 404:
+    path = job_path(job_id)
+    if not path.exists():
         raise HTTPException(status_code=404, detail='Removal job not found')
-    if status >= 400:
-        raise HTTPException(status_code=502, detail=body.get('error', 'Undeploy agent error'))
-    return body
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        raise HTTPException(status_code=500, detail='Removal job is unreadable')
