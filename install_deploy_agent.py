@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import plistlib
+import secrets
 import subprocess
 import sys
 from pathlib import Path
@@ -10,11 +11,18 @@ HOME = Path.home()
 LABEL = "online.novec.appstore-deploy-agent"
 PLIST = HOME / "Library" / "LaunchAgents" / f"{LABEL}.plist"
 LOG_DIR = HOME / "Library" / "Logs"
+DATA = BASE / "data"
+AGENT_SECRET = DATA / "deploy-agent-secret.txt"
 
 
 def main():
     PLIST.parent.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    DATA.mkdir(parents=True, exist_ok=True)
+    if not AGENT_SECRET.exists() or not AGENT_SECRET.read_text(encoding="utf-8").strip():
+        AGENT_SECRET.write_text(secrets.token_urlsafe(32), encoding="utf-8")
+        os.chmod(AGENT_SECRET, 0o600)
+
     data = {
         "Label": LABEL,
         "ProgramArguments": [sys.executable, str(BASE / "deploy_agent.py")],
