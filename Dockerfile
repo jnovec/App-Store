@@ -1,0 +1,10 @@
+FROM python:3.12-alpine
+RUN apk add --no-cache git wget
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app.py .
+COPY static ./static
+RUN mkdir -p /data
+EXPOSE 8788
+CMD ["uvicorn","app:api","--host","0.0.0.0","--port","8788"]
