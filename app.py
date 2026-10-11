@@ -11,12 +11,26 @@ DATA = Path('/data')
 REPO = DATA / 'awesome-selfhosted-data'
 CATALOG = DATA / 'catalog.json'
 ICONS = DATA / 'icons'
+ICON_CACHE_VERSION = DATA / 'icon-cache-version.txt'
+ICON_CACHE_VERSION_VALUE = 'website-only-v2'
 
-api = FastAPI(title='NOVEC App Store', version='0.2.0')
+api = FastAPI(title='NOVEC App Store', version='0.2.1')
+
+def ensure_icon_cache_version():
+    ICONS.mkdir(parents=True, exist_ok=True)
+    current = ICON_CACHE_VERSION.read_text(encoding='utf-8').strip() if ICON_CACHE_VERSION.exists() else ''
+    if current != ICON_CACHE_VERSION_VALUE:
+        for p in ICONS.iterdir():
+            if p.is_file():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+        ICON_CACHE_VERSION.write_text(ICON_CACHE_VERSION_VALUE, encoding='utf-8')
 
 def sync_catalog():
     DATA.mkdir(parents=True, exist_ok=True)
-    ICONS.mkdir(parents=True, exist_ok=True)
+    ensure_icon_cache_version()
     if not REPO.exists():
         subprocess.run(['git','clone','--depth','1','https://github.com/awesome-selfhosted/awesome-selfhosted-data.git',str(REPO)], check=True)
     else:
@@ -107,7 +121,7 @@ def download_icon(url: str, target_base: Path):
         return None
 
 def resolve_icon(app):
-    ICONS.mkdir(parents=True, exist_ok=True)
+    ensure_icon_cache_version()
     existing = cached_icon(app['id'])
     if existing:
         return existing
@@ -119,18 +133,15 @@ def resolve_icon(app):
             root = f'{parsed.scheme}://{parsed.netloc}'
             for path in ('/favicon.ico','/apple-touch-icon.png','/favicon.png'):
                 got = download_icon(root + path, base)
-                if got: return got
+                if got:
+                    return got
         except Exception:
             pass
-    source = app.get('source') or ''
-    m = re.match(r'https?://github\.com/([^/]+)/', source)
-    if m:
-        got = download_icon(f'https://github.com/{m.group(1)}.png?size=128', base)
-        if got: return got
     return None
 
 @api.on_event('startup')
 def startup():
+    ensure_icon_cache_version()
     try:
         sync_catalog()
     except Exception as e:
