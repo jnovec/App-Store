@@ -5,17 +5,11 @@ import re
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 from deploy_helper import executable, load_registry, save_registry, write_tunnel_config
 
 HOME = Path.home()
-BASE = HOME / "novec-app-store"
-DATA = BASE / "data"
-DNS_RELEASE_SECRET = DATA / "dns-release-secret.txt"
-DNS_RELEASE_URL = "https://n8n.novec.online/webhook/novec-appstore-release-dns"
 
 
 def log(message):
@@ -25,34 +19,6 @@ def log(message):
 def fail(message, code=1):
     log(json.dumps({"ok": False, "error": message}))
     raise SystemExit(code)
-
-
-def release_dns(hostname):
-    secret = DNS_RELEASE_SECRET.read_text(encoding="utf-8").strip() if DNS_RELEASE_SECRET.exists() else ""
-    if not secret:
-        fail("DNS_RELEASE_SECRET_MISSING", 12)
-    payload = json.dumps({"hostname": hostname}).encode("utf-8")
-    request = urllib.request.Request(
-        DNS_RELEASE_URL,
-        data=payload,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "X-NOVEC-Release-Key": secret,
-            "User-Agent": "NOVEC-App-Store/0.7",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=25) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        details = exc.read().decode("utf-8", "replace")[-2000:]
-        fail("DNS_RELEASE_FAILED: " + details, 13)
-    except Exception as exc:
-        fail("DNS_RELEASE_FAILED: " + str(exc), 13)
-    if not isinstance(body, dict) or not body.get("ok"):
-        fail("DNS_RELEASE_FAILED: " + json.dumps(body, ensure_ascii=False), 13)
-    return body
 
 
 def main():
@@ -77,7 +43,7 @@ def main():
         fail("DOCKER_NOT_FOUND", 4)
 
     container = str(item.get("container") or "").strip()
-    log(f"[1/6] Removing container {container or '(unknown)'}…")
+    log(f"[1/5] Removing container {container or '(unknown)'}…")
     if container:
         exists = subprocess.run([docker, "inspect", container], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if exists.returncode == 0:
@@ -85,7 +51,7 @@ def main():
         else:
             log("Container is already absent.")
 
-    log("[2/6] Persistent data policy: " + ("DELETE volumes" if purge_data else "KEEP volumes"))
+    log("[2/5] Persistent data policy: " + ("DELETE volumes" if purge_data else "KEEP volumes"))
     removed_volumes = []
     if purge_data and container:
         try:
@@ -99,21 +65,17 @@ def main():
                 removed_volumes.append(volume)
                 log("Removed volume: " + volume)
 
-    log(f"[3/6] Releasing Cloudflare DNS hostname {hostname}…")
-    dns_result = release_dns(hostname)
-    log("DNS release: " + ("record deleted" if dns_result.get("deleted") else "record already absent"))
-
-    log("[4/6] Removing deployment from NOVEC registry…")
+    log("[3/5] Removing deployment from NOVEC registry…")
     registry.pop(hostname, None)
     save_registry(registry)
 
-    log("[5/6] Updating Cloudflare tunnel ingress…")
+    log(f"[4/5] Releasing {hostname} from Cloudflare tunnel ingress…")
     write_tunnel_config(registry)
     if launchctl:
         subprocess.run([launchctl, "kickstart", "-k", f"gui/{os.getuid()}/online.novec.appstore-tunnel"], check=False)
         time.sleep(2)
 
-    log("[6/6] Deployment removed and hostname released.")
+    log("[5/5] Deployment removed. Hostname is free for reuse by NOVEC App Store.")
     print(json.dumps({
         "ok": True,
         "action": "undeploy",
@@ -122,7 +84,7 @@ def main():
         "container": container,
         "purge_data": purge_data,
         "removed_volumes": removed_volumes,
-        "dns_deleted": bool(dns_result.get("deleted")),
+        "hostname_reusable": True,
     }), flush=True)
 
 
