@@ -3,6 +3,7 @@
   const all = (s, root=document) => [...root.querySelectorAll(s)];
   const widthMQ = window.matchMedia('(max-width: 820px)');
   const coarseMQ = window.matchMedia('(pointer: coarse)');
+  let observerTimer = null;
 
   function mobileMode() {
     const touch = coarseMQ.matches || navigator.maxTouchPoints > 0 || /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent || '');
@@ -54,12 +55,18 @@
   }
 
   function setTitle(title) {
-    const t=by('#novecMobileTitle'); if(t)t.textContent=title || 'App Store';
+    const finalTitle = title || 'App Store';
+    const t=by('#novecMobileTitle');
+    if(t && t.textContent !== finalTitle) t.textContent=finalTitle;
     const nav=by('#novecMobileNav'); if(!nav)return;
     const map={Store:'App Store',Deploy:'Deployments',Monitor:'Monitoring',Backups:'Backups'};
-    all('button',nav).forEach(b=>b.classList.remove('active'));
-    const expected = Object.entries(map).find(([_,v])=>v===title)?.[0];
-    if(expected){const b=all('button',nav).find(x=>x.textContent.includes(expected)); if(b)b.classList.add('active');}
+    const expected = Object.entries(map).find(([_,v])=>v===finalTitle)?.[0] || '';
+    all('button',nav).forEach(b=>{
+      const shouldBeActive = expected && b.textContent.includes(expected);
+      if (b.classList.contains('active') !== Boolean(shouldBeActive)) {
+        b.classList.toggle('active', Boolean(shouldBeActive));
+      }
+    });
   }
 
   function baseNav(label) {
@@ -75,18 +82,21 @@
     closeMore(); closeDetail();
     if(label==='App Store') showStoreFallback();
     const a=baseNav(label); if(a) a.click();
-    setTimeout(()=>syncSectionTitle(label),30);
+    setTimeout(()=>syncSectionTitle(label),60);
     window.scrollTo({top:0,behavior:'smooth'});
   }
 
   function syncSectionTitle(fallback='App Store') {
+    if(!document.body.classList.contains('novec-mobile')) return;
     const admin=by('#novecAdminPage');
     if(admin && !admin.hidden){setTitle(by('h1',admin)?.textContent?.trim() || fallback); annotateTables(admin); return;}
     const dep=by('#novecDeploymentsView');
     if(dep && !dep.hidden){setTitle('Deployments'); return;}
     setTitle('App Store');
     const count=by('#novecMobileCount');
-    const total=by('#total'); if(count&&total) count.textContent=(total.textContent||'').trim() ? `${total.textContent.trim()} apps` : '';
+    const total=by('#total');
+    const value=(total?.textContent||'').trim();
+    if(count && count.textContent !== (value ? `${value} apps` : '')) count.textContent=value ? `${value} apps` : '';
   }
 
   function openMore(){document.body.classList.add('novec-more-open');closeDetail();}
@@ -97,13 +107,17 @@
   function annotateTables(root=document) {
     all('.novec-table',root).forEach(table=>{
       const labels=all('thead th',table).map(th=>(th.textContent||'').trim());
-      all('tbody tr',table).forEach(tr=>all('td',tr).forEach((td,i)=>{if(!td.hasAttribute('colspan'))td.dataset.label=labels[i]||'';}));
+      all('tbody tr',table).forEach(tr=>all('td',tr).forEach((td,i)=>{
+        if(!td.hasAttribute('colspan') && td.dataset.label !== (labels[i]||'')) td.dataset.label=labels[i]||'';
+      }));
     });
   }
 
   function applyMode() {
     const on=mobileMode();
-    document.body.classList.toggle('novec-mobile',on);
+    if (document.body.classList.contains('novec-mobile') !== on) {
+      document.body.classList.toggle('novec-mobile',on);
+    }
     if(on){ensureShell();annotateTables();syncSectionTitle();}
     else{document.body.classList.remove('novec-detail-open','novec-more-open');}
   }
@@ -117,13 +131,18 @@
 
   const observer=new MutationObserver(()=>{
     if(!document.body.classList.contains('novec-mobile'))return;
-    annotateTables();
-    syncSectionTitle();
+    clearTimeout(observerTimer);
+    observerTimer=setTimeout(()=>{
+      annotateTables();
+      syncSectionTitle();
+    },50);
   });
-  observer.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['hidden','class']});
+  observer.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['hidden']});
 
   const refresh=()=>applyMode();
   widthMQ.addEventListener?.('change',refresh); coarseMQ.addEventListener?.('change',refresh);
   window.addEventListener('resize',()=>{clearTimeout(window.__novecMobileResize);window.__novecMobileResize=setTimeout(refresh,120);});
-  applyMode();
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyMode, {once:true});
+  else applyMode();
 })();
