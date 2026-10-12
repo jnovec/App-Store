@@ -20,6 +20,7 @@ def root_ext():
         '<link rel="stylesheet" href="/static/deploy-modals.css?v=1">'
         '<link rel="stylesheet" href="/static/admin-panels.css?v=1">'
         '<link rel="stylesheet" href="/static/pagination.css?v=1">'
+        '<link rel="stylesheet" href="/static/mobile.css?v=1">'
         '</head>'
     )
     html = html.replace(
@@ -27,6 +28,7 @@ def root_ext():
         '<script src="/static/status-retry.js?v=1"></script>'
         '<script src="/static/pagination.js?v=1"></script>'
         '<script src="/static/admin-panels.js?v=1"></script>'
+        '<script src="/static/mobile.js?v=1"></script>'
         '</body>'
     )
     return HTMLResponse(html)
