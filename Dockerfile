@@ -7,6 +7,7 @@ COPY app.py .
 COPY server.py .
 COPY server_ext.py .
 COPY undeploy_api.py .
+COPY admin_api.py .
 COPY template_catalog.py .
 COPY static ./static
 RUN mkdir -p /data
