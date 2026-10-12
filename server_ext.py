@@ -15,4 +15,5 @@ def root_ext():
     response = server.root_v2()
     html = response.body.decode('utf-8')
     html = html.replace('</head>', '<link rel="stylesheet" href="/static/deploy-modals.css?v=1"></head>')
+    html = html.replace('</body>', '<script src="/static/status-retry.js?v=1"></script></body>')
     return HTMLResponse(html)
