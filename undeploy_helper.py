@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 import json
-import os
 import re
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 from deploy_helper import executable, load_registry, save_registry, write_tunnel_config
@@ -38,7 +36,6 @@ def main():
         fail("DEPLOYMENT_NOT_FOUND", 3)
 
     docker = executable("docker", ["/Applications/Docker.app/Contents/Resources/bin/docker", "/opt/homebrew/bin/docker"])
-    launchctl = executable("launchctl", ["/bin/launchctl"])
     if not docker:
         fail("DOCKER_NOT_FOUND", 4)
 
@@ -69,11 +66,8 @@ def main():
     registry.pop(hostname, None)
     save_registry(registry)
 
-    log(f"[4/5] Releasing {hostname} from Cloudflare tunnel ingress…")
+    log(f"[4/5] Updating desired Cloudflare ingress for {hostname} without restarting the App Store tunnel…")
     write_tunnel_config(registry)
-    if launchctl:
-        subprocess.run([launchctl, "kickstart", "-k", f"gui/{os.getuid()}/online.novec.appstore-tunnel"], check=False)
-        time.sleep(2)
 
     log("[5/5] Deployment removed. Hostname is free for reuse by NOVEC App Store.")
     print(json.dumps({
@@ -85,6 +79,7 @@ def main():
         "purge_data": purge_data,
         "removed_volumes": removed_volumes,
         "hostname_reusable": True,
+        "tunnel_restart_deferred": True,
     }), flush=True)
 
 
