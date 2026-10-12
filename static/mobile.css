@@ -1,0 +1,82 @@
+body.novec-mobile{--mobile-nav-h:74px;--mobile-header-h:58px;overflow-x:hidden;background:#f6f8fb;padding-bottom:calc(var(--mobile-nav-h) + env(safe-area-inset-bottom,0px))}
+body.novec-mobile .app{display:block;min-height:100dvh}
+body.novec-mobile .side{display:none!important}
+body.novec-mobile main{padding:calc(var(--mobile-header-h) + 14px) 14px calc(var(--mobile-nav-h) + 22px)!important;max-width:none;width:100%}
+body.novec-mobile .novec-mobile-header{position:fixed;z-index:1110;top:0;left:0;right:0;height:calc(var(--mobile-header-h) + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) 14px 0;background:rgba(255,255,255,.92);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-bottom:1px solid #e7ebf2;display:flex;align-items:center;justify-content:space-between;box-shadow:0 1px 8px rgba(18,35,63,.05)}
+body.novec-mobile .novec-mobile-brand{display:flex;align-items:center;gap:10px;font-weight:850;font-size:19px;color:#172033}
+body.novec-mobile .novec-mobile-brand .mark{width:34px;height:34px;border-radius:11px;font-size:15px}
+body.novec-mobile .novec-mobile-header small{display:block;color:#748096;font-size:11px;font-weight:650}
+body.novec-mobile .top{position:sticky;top:calc(var(--mobile-header-h) + env(safe-area-inset-top,0px));z-index:52;display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:0 -4px 16px;padding:9px 4px 10px;background:rgba(246,248,251,.94);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+body.novec-mobile .top .search{grid-column:1/-1;width:100%;max-width:none;min-height:46px;font-size:16px}
+body.novec-mobile .top .select{min-width:0;width:100%;height:44px;padding:8px;font-size:13px}
+body.novec-mobile .top #sync{grid-column:1/-1;min-height:44px}
+body.novec-mobile h1{font-size:28px;line-height:1.05;margin-top:8px}
+body.novec-mobile .sub{font-size:13px;margin-bottom:14px}
+body.novec-mobile .stats{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;padding:1px 1px 7px;margin:0 -1px 16px;overscroll-behavior-inline:contain;-webkit-overflow-scrolling:touch}
+body.novec-mobile .stats::-webkit-scrollbar{display:none}
+body.novec-mobile .stat{min-width:148px;scroll-snap-align:start;padding:14px;border-radius:15px}
+body.novec-mobile .stat b{font-size:21px}
+body.novec-mobile .layout{display:block}
+body.novec-mobile .head{margin:15px 0 10px;align-items:center}
+body.novec-mobile .head h2{font-size:20px}
+body.novec-mobile .grid{display:grid!important;grid-template-columns:1fr!important;gap:10px!important}
+body.novec-mobile .card{min-height:96px;border-radius:16px;padding:13px;grid-template-columns:54px 1fr;gap:12px;box-shadow:0 3px 12px rgba(30,58,95,.04)}
+body.novec-mobile .card .icon{width:54px;height:54px;border-radius:14px}
+body.novec-mobile .name{font-size:16px}
+body.novec-mobile .desc{height:auto;max-height:39px;line-height:1.45}
+body.novec-mobile .badges{margin-top:7px;gap:5px}
+body.novec-mobile .badge{font-size:10px;padding:3px 7px}
+body.novec-mobile .detail{position:fixed!important;z-index:1210!important;left:0!important;right:0!important;bottom:0!important;top:auto!important;width:100%!important;height:auto!important;max-height:82dvh!important;overflow:auto!important;border-radius:24px 24px 0 0!important;padding:30px 18px calc(24px + env(safe-area-inset-bottom,0px))!important;box-shadow:0 -25px 70px rgba(18,35,63,.25)!important;transform:translateY(105%);transition:transform .28s cubic-bezier(.2,.8,.2,1)}
+body.novec-mobile .detail:before{content:'';position:absolute;top:10px;left:50%;transform:translateX(-50%);width:42px;height:5px;border-radius:999px;background:#d7dee8}
+body.novec-mobile.novec-detail-open .detail{transform:translateY(0)}
+body.novec-mobile .novec-mobile-detail-backdrop{position:fixed;z-index:1205;inset:0;background:rgba(18,29,48,.36);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);opacity:0;pointer-events:none;transition:opacity .2s}
+body.novec-mobile.novec-detail-open .novec-mobile-detail-backdrop{opacity:1;pointer-events:auto}
+body.novec-mobile .detail .icon{width:64px;height:64px}
+body.novec-mobile .detail h2{font-size:24px;margin-top:12px}
+body.novec-mobile .detail .btn{min-height:48px;font-size:15px}
+body.novec-mobile .novec-pagination{gap:7px;padding:14px 0 4px;overflow-x:auto;justify-content:flex-start!important;-webkit-overflow-scrolling:touch}
+body.novec-mobile .novec-pagination .btn{min-width:44px;min-height:44px;padding:9px 12px;flex:0 0 auto}
+body.novec-mobile .novec-page-meta{width:100%;order:-1;text-align:center;margin-bottom:3px}
+body.novec-mobile .novec-mobile-nav{position:fixed;z-index:1300;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));min-height:64px;padding:6px;background:rgba(255,255,255,.94);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(220,227,237,.95);border-radius:20px;box-shadow:0 16px 50px rgba(18,35,63,.2);display:grid;grid-template-columns:repeat(5,1fr);gap:3px}
+body.novec-mobile .novec-mobile-nav button{border:0;background:transparent;border-radius:14px;min-width:0;padding:7px 3px 5px;color:#64748b;font:600 10px/1.1 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}
+body.novec-mobile .novec-mobile-nav button i{font-style:normal;font-size:20px;line-height:1}
+body.novec-mobile .novec-mobile-nav button.active{background:#eaf3ff;color:#0969da}
+body.novec-mobile .novec-mobile-more-backdrop{position:fixed;z-index:1350;inset:0;background:rgba(18,29,48,.36);opacity:0;pointer-events:none;transition:opacity .2s}
+body.novec-mobile .novec-mobile-more{position:fixed;z-index:1360;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));background:#fff;border:1px solid #e2e8f0;border-radius:22px;padding:12px;box-shadow:0 25px 80px rgba(18,35,63,.3);transform:translateY(120%);transition:transform .25s cubic-bezier(.2,.8,.2,1)}
+body.novec-mobile.novec-more-open .novec-mobile-more{transform:translateY(0)}
+body.novec-mobile.novec-more-open .novec-mobile-more-backdrop{opacity:1;pointer-events:auto}
+body.novec-mobile .novec-mobile-more h3{margin:5px 7px 10px;font-size:16px}
+body.novec-mobile .novec-mobile-more-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+body.novec-mobile .novec-mobile-more button{border:1px solid #e6ebf2;background:#f9fbfd;border-radius:14px;padding:14px 10px;text-align:left;font:700 13px/1.2 inherit;color:#334155;min-height:58px}
+body.novec-mobile .novec-deployments-page,body.novec-mobile .novec-admin-page{left:0!important;top:0!important;padding:18px 14px calc(var(--mobile-nav-h) + 28px + env(safe-area-inset-bottom,0px))!important}
+body.novec-mobile .novec-deployments-head,body.novec-mobile .novec-admin-head{padding-top:8px;gap:12px;margin-bottom:14px}
+body.novec-mobile .novec-deployments-head h1,body.novec-mobile .novec-admin-head h1{font-size:27px!important;line-height:1.08}
+body.novec-mobile .novec-admin-actions{width:100%}
+body.novec-mobile .novec-admin-actions .btn{min-height:44px;flex:1}
+body.novec-mobile .novec-admin-stats{display:flex!important;grid-template-columns:none!important;overflow-x:auto;gap:9px;margin:0 -1px 14px;padding:1px 1px 6px;-webkit-overflow-scrolling:touch}
+body.novec-mobile .novec-admin-stat{min-width:145px;flex:0 0 145px;padding:13px}
+body.novec-mobile .novec-admin-stat b{font-size:20px}
+body.novec-mobile .novec-admin-grid,body.novec-mobile .novec-settings-grid,body.novec-mobile .novec-deployments-grid{grid-template-columns:1fr!important;gap:10px!important}
+body.novec-mobile .novec-admin-card,body.novec-mobile .novec-deployment-card,body.novec-mobile .novec-setting{border-radius:16px;padding:15px}
+body.novec-mobile .novec-source{align-items:flex-start;gap:12px;flex-direction:column}
+body.novec-mobile .novec-source .btn{width:100%}
+body.novec-mobile .novec-table-wrap{background:transparent;border:0;overflow:visible}
+body.novec-mobile .novec-table{min-width:0;width:100%;display:block}
+body.novec-mobile .novec-table thead{display:none}
+body.novec-mobile .novec-table tbody{display:grid;gap:10px}
+body.novec-mobile .novec-table tr{display:block;background:#fff;border:1px solid #e7ebf2;border-radius:16px;padding:9px 13px;box-shadow:0 3px 12px rgba(30,58,95,.04)}
+body.novec-mobile .novec-table td{display:flex!important;justify-content:space-between;align-items:flex-start;gap:12px;border:0!important;padding:8px 0!important;text-align:right;word-break:break-word}
+body.novec-mobile .novec-table td:before{content:attr(data-label);font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:750;color:#8490a3;text-align:left;flex:0 0 35%}
+body.novec-mobile .novec-table td[colspan]:before{display:none}
+body.novec-mobile .novec-table td[colspan]{display:block!important;text-align:center;padding:24px 4px!important}
+body.novec-mobile .novec-inline-pin{flex-wrap:wrap}
+body.novec-mobile .novec-inline-pin .btn{width:100%}
+body.novec-mobile .novec-console-backdrop,body.novec-mobile .novec-input-backdrop{padding:0!important;align-items:end!important;place-items:end center!important}
+body.novec-mobile .novec-console-card,body.novec-mobile .novec-input-card{width:100%!important;max-width:none!important;max-height:94dvh!important;border-radius:24px 24px 0 0!important;padding:18px 14px calc(18px + env(safe-area-inset-bottom,0px))!important;border-bottom:0!important}
+body.novec-mobile .novec-console-title h2,body.novec-mobile .novec-input-head h2{font-size:22px!important}
+body.novec-mobile .novec-terminal pre{height:min(42dvh,330px)!important;font-size:11px!important}
+body.novec-mobile .novec-input-actions{display:grid!important;grid-template-columns:1fr 1fr;width:100%}
+body.novec-mobile .novec-input-actions .btn{min-height:46px}
+body.novec-mobile .novec-deployment-actions{display:grid!important;grid-template-columns:1fr 1fr;width:100%}
+body.novec-mobile .novec-deployment-actions .btn{width:100%;min-height:44px}
+@media (min-width:821px){.novec-mobile-header,.novec-mobile-nav,.novec-mobile-more,.novec-mobile-more-backdrop,.novec-mobile-detail-backdrop{display:none!important}}
